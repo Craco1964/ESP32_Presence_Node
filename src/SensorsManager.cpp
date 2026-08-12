@@ -39,7 +39,7 @@ bool SensorsManager::begin() {
     } else {
         radar.activateConfigMode();
         radar.setSystemMode(LD2420SystemMode::Energy);
-        radar.setGateRange(2, 8, 30);   // 70 cm – 630 cm, 30 s hold-off
+        radar.setGateRange(0, 6, 5);   // ogni gate è circa 75 cm, 5s hold-off
         radar.deactivateConfigMode();
         //applyCustomThresholds();
         
@@ -120,7 +120,21 @@ void SensorsManager::update() {
     if (g_hasNewData) {
         currentRadarPresence = g_isPresent;
         currentRadarDistance = g_distance;
-        currentRadarStatus = g_status;
+        
+        // Se il sensore fisico non rileva nulla (0), azzeriamo senza obiezioni
+        if (g_status == 0) {
+            currentRadarStatus = 0;
+        } 
+        // Se il sensore rileva MOTION (1) ma noi lo avevamo bloccato a PRESENCE (2),
+        // NON lo sovrascriviamo! Lasciamo che sia il nostro Heartbeat a decidere se sbloccarlo.
+        else if (g_status == 1 && currentRadarStatus == 2) {
+             // currentRadarStatus rimane 2 (Presenza Software)
+        } 
+        // In tutti gli altri casi, copiamo il dato grezzo
+        else {
+            currentRadarStatus = g_status;
+        }
+        
         g_hasNewData = false;
 
         // Segnaliamo all'ESP32 che deve ridisegnare il display
@@ -132,14 +146,59 @@ void SensorsManager::update() {
     }
 
     
-    // --- HEARTBEAT DIAGNOSTICO (Stampa ogni 1 secondo senza eccezioni) ---
+    // --- LOGICA SOFTWARE "PRESENZA STATICA" E HEARTBEAT ---
+    const int DISTANCE_TOLERANCE = 15;     
+    const int REQUIRED_STABLE_SECONDS = 5; 
+
+    static int savedDistance = 0;
+    static int stableSeconds = 0;
     static unsigned long lastHeartbeat = 0;
+
     if (millis() - lastHeartbeat > 1000) {
+        
+        // 1. Valutiamo SEMPRE se c'è un target valido (sia in Motion che in Presence)
+        if (currentRadarStatus == 1 || currentRadarStatus == 2) { 
+            
+            // Se eravamo a 0, inizializziamo la distanza di partenza
+            if (savedDistance == 0) savedDistance = currentRadarDistance;
+
+            int delta = abs(currentRadarDistance - savedDistance);
+            
+            if (delta <= DISTANCE_TOLERANCE) {
+                // Sei rimasto fermo entro la tolleranza
+                if (stableSeconds < REQUIRED_STABLE_SECONDS) {
+                    stableSeconds++; 
+                }
+                
+                if (stableSeconds >= REQUIRED_STABLE_SECONDS) {
+                    currentRadarStatus = 2; // Passa a (o mantieni) PRESENCE
+                    // Aggiorniamo gradualmente l'ancora per assecondare la respirazione
+                    savedDistance = currentRadarDistance; 
+                }
+            } else {
+                // TI SEI MOSSO OLTRE LA TOLLERANZA! 
+                // Rompiamo il blocco e torniamo a MOTION
+                currentRadarStatus = 1;
+                savedDistance = currentRadarDistance; // Nuovo punto di ancoraggio
+                stableSeconds = 0; // Azzera il contatore
+            }
+        } 
+        else if (currentRadarStatus == 0) { 
+            // Stanza vuota, resetta tutto
+            stableSeconds = 0;
+            savedDistance = 0;
+        }
+
+        // 2. Prepariamo la stringa per il monitor seriale
         String stateStr = (currentRadarStatus == 1) ? "🏃 MOTION  " : 
                           (currentRadarStatus == 2) ? "🧘 PRESENCE" : 
                                                       "👻 NONE    ";
         
-        Serial.printf("💓 [LIVE] Stato: %s | Distanza: %4d cm | Loop: OK\n", stateStr.c_str(), currentRadarDistance);
+        int logDistance = (currentRadarStatus == 0) ? 0 : currentRadarDistance;
+        
+        Serial.printf("💓 [LIVE] Stato: %s | Distanza: %4d cm | Stabilità: %ds | Loop: OK\n", 
+                      stateStr.c_str(), logDistance, stableSeconds);
+                      
         lastHeartbeat = millis();
     }
 }

@@ -10,7 +10,6 @@ public:
     SensorsManager();
     bool begin();
     
-    // --- IL PEZZO MANCANTE ---
     void update(); 
 
     bool getRadarPresence() const { return currentRadarPresence; }
