@@ -1,0 +1,14 @@
+# Cartelle di build e librerie locali di PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clangd/
+
+# Configurazione locale dell'IDE
+.vscode/*.json
+!.vscode/extensions.json
+.idea/
+
+# File di sistema
+.DS_Store
+Thumbs.db
