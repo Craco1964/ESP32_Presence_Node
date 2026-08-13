@@ -81,6 +81,8 @@ void WebManager::setupWiFi() {
         } else {
             // --- NUOVO: SINCRONIZZAZIONE SERVER NTP DOPO LA CONNESSIONE WIFI ---
             Serial.println("\nWi-Fi Connesso! Configuro l'orologio NTP...");
+            // Evita che il wi-fi vada in sleep mode per non perdere la sincronizzazione del tempo  
+            WiFi.setSleep(false); // <-- TODO V2.0: Toggle da App React
             configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
         }
     }

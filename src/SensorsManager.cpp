@@ -15,6 +15,25 @@ static const char *statusLabel(LD2420DetectionStatus s) {
     }
 }
 
+/* 
+Ciascuno dei 16 gate copre 70 cm . Il gate 0 (0–70 cm) in genere produce falsi trigger dal PCB del sensore stesso: escluderlo con minGate = 1.
+
+Gate  0 =    0 –   70 cm  ← near-field, exclude with minGate=1
+Gate  1 =   70 –  140 cm
+Gate  5 =  350 –  420 cm
+Gate  8 =  560 –  630 cm
+Gate 11 =  770 –  840 cm  ← practical wall-mount motion limit (~8 m)
+Gate 15 = 1050 – 1120 cm  ← theoretical max
+*/
+
+/* Wiring:
+ *   ESP32 / ESP32-S3    LD2420
+ *   GG_TXPIN        ──  RX
+ *   GG_RXPIN        ──  TX
+ *   3.3 V           ──  VCC
+ *   GND             ──  GND
+ */
+
 /**
  * @brief Print a single-line ASCII bar for one gate energy value.
  * @details Scale: each '█' represents 500 energy units, max 20 bars.
@@ -39,7 +58,7 @@ bool SensorsManager::begin() {
     } else {
         radar.activateConfigMode();
         radar.setSystemMode(LD2420SystemMode::Energy);
-        radar.setGateRange(0, 6, 5);   // ogni gate è circa 75 cm, 5s hold-off
+        radar.setGateRange(0, 8, 5);   // ogni gate è circa 75 cm, 5s hold-off
         radar.deactivateConfigMode();
         //applyCustomThresholds();
         
