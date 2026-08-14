@@ -100,16 +100,18 @@ void WebManager::setupRoutes() {
 
     _server->serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
-    // 1. GET Parametri Radar e Automazione (AGGIORNATO PER LE REGOLE)
+    // 1. GET Parametri Radar e Automazione
     _server->on("/api/settings/radar", HTTP_GET, [this](AsyncWebServerRequest *request){
         _preferences.begin("radar_cfg", true);
         int sens = _preferences.getInt("sensitivity", 250);
         int timeo = _preferences.getInt("timeout", 60);
         bool autoEn = _preferences.getBool("automation", true);
-        String rulesStr = _preferences.getString("rules", "[]"); // Legge l'array JSON come stringa
+        bool ignOn = _preferences.getBool("ignoreIfOn", false); // <-- NUOVO
+        String rulesStr = _preferences.getString("rules", "[]");
         _preferences.end();
         
-        String response = "{\"sensitivity\":" + String(sens) + ",\"timeout\":" + String(timeo) + ",\"automationEnabled\":" + (autoEn?"true":"false") + ",\"rules\":" + rulesStr + "}";
+        // Aggiungiamo ignoreIfOn al JSON in uscita
+        String response = "{\"sensitivity\":" + String(sens) + ",\"timeout\":" + String(timeo) + ",\"automationEnabled\":" + (autoEn?"true":"false") + ",\"ignoreIfOn\":" + (ignOn?"true":"false") + ",\"rules\":" + rulesStr + "}";
         request->send(200, "application/json", response);
     });
 
@@ -121,6 +123,11 @@ void WebManager::setupRoutes() {
         _preferences.putInt("sensitivity", jsonObj["sensitivity"] | 250);
         _preferences.putInt("timeout", jsonObj["timeout"] | 60);
         _preferences.putBool("automation", jsonObj["automationEnabled"] | true);
+        
+        // Salviamo il nuovo parametro in memoria in modo sicuro
+        if (!jsonObj["ignoreIfOn"].isNull()) {
+            _preferences.putBool("ignoreIfOn", jsonObj["ignoreIfOn"].as<bool>());
+        }
         
         if (!jsonObj["rules"].isNull()) {
             String rulesStr;

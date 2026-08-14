@@ -60,4 +60,8 @@ private:
     bool isRuleActive(const TimeRule& rule, int currentMins);
     // Funzione helper matematica
     String hexToXY(String hexColor);
+
+    bool _ignoreIfOn;             // Flag per rispettare il telecomando
+    bool isPhysicallyOn();        // Funzione per interrogare il Bridge
+    
 };

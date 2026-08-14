@@ -25,6 +25,7 @@ void HueManager::reloadConfig() {
     _sensitivity = _preferences.getInt("sensitivity", 250);
     _timeoutSec = _preferences.getInt("timeout", 60);
     _automationEnabled = _preferences.getBool("automation", true);
+    _ignoreIfOn = _preferences.getBool("ignoreIfOn", false); // Carica il nuovo flag
     
     String rulesStr = _preferences.getString("rules", "[]");
     _preferences.end();
@@ -45,10 +46,8 @@ void HueManager::reloadConfig() {
             rule.action = r["action"].as<String>();
             rule.brightness = r["brightness"].as<int>();
             
-            // 👇 --- CORREZIONE: Parsing esplicito come String per evitare bug con ArduinoJson 7 --- 👇
             rule.color = r["color"].as<String>();
             if (rule.color == "") rule.color = "#ffffff"; 
-            // ☝️ ---------------------------------------------------------------------------------- ☝️
 
             _rules.push_back(rule);
         }
@@ -100,18 +99,19 @@ void HueManager::update() {
             if (isRuleActive(rule, currentMins)) {
                 activeAction = rule.action;
                 activeBrightness = rule.brightness;
-                activeColor = rule.color; // <-- CORREZIONE FONDAMENTALE: Estrae il colore della regola attiva!
+                activeColor = rule.color; 
                 
                 if (activeAction == "on_off") _currentRuleName = "Auto: ON & OFF";
                 else if (activeAction == "on_only") _currentRuleName = "Auto: Solo Accensione";
                 else if (activeAction == "off_only") _currentRuleName = "Auto: Solo Spegnimento";
+                else if (activeAction == "do_nothing") _currentRuleName = "Auto: Nessuna Azione"; // <-- NUOVO TESTO
                 
                 break; 
             }
         }
     }
 
-    _currentColor = activeColor; // Aggiorna il colore per il display LCD
+    _currentColor = activeColor;
 
     // --- LOG DIAGNOSTICO DI CONFIGURAZIONE (Ogni 5 secondi) ---
     static unsigned long lastDebugTime = 0;
@@ -130,6 +130,12 @@ void HueManager::update() {
 
     bool currentValidPresence = (radarStatus > 0 && distance <= _sensitivity);
 
+    // 👇 --- NOVITÀ: REGOLA "NESSUNA AZIONE" --- 👇
+    if (activeAction == "do_nothing") {
+        if (currentValidPresence) _lastValidPresenceTime = millis(); // Traccia comunque la presenza per sicurezza
+        return; // Blocca l'esecuzione: ignora il radar per questa fascia oraria!
+    }
+
     // --- 4. MOTORE DELLE AZIONI ---
     if (currentValidPresence) {
         _lastValidPresenceTime = millis(); 
@@ -137,8 +143,21 @@ void HueManager::update() {
         
         if (!_lightIsOn) {
             if (activeAction == "on_off" || activeAction == "on_only") {
-                Serial.printf("\n💡 [AUTO-HUE] Presenza rilevata! Accendo col colore della fascia: %s\n", activeColor.c_str());
-                forceLightsState(true, activeBrightness, activeColor); // <-- PASSA IL COLORE ATTIVO!
+                
+                // 👇 --- NOVITÀ: RISPETTO PER IL TELECOMANDO --- 👇
+                bool skipOnCommand = false;
+                if (_ignoreIfOn) {
+                    if (isPhysicallyOn()) { // Interroga il bridge
+                        Serial.println("💡 [AUTO-HUE] Luce già accesa fisicamente! Ignoro per non sovrascrivere il telecomando.");
+                        skipOnCommand = true;
+                        _lightIsOn = true; // Sincronizza lo stato interno dell'ESP32
+                    }
+                }
+
+                if (!skipOnCommand) {
+                    Serial.printf("\n💡 [AUTO-HUE] Presenza rilevata! Accendo col colore della fascia: %s\n", activeColor.c_str());
+                    forceLightsState(true, activeBrightness, activeColor);
+                }
             }
         }
     } else {
@@ -255,4 +274,30 @@ void HueManager::setAutomationEnabled(bool state) {
     _preferences.begin("radar_cfg", false);
     _preferences.putBool("automation", state);
     _preferences.end();
+}
+
+// 👇 --- NUOVA FUNZIONE PER INTERROGARE IL BRIDGE --- 👇
+// Interroga la primissima luce associata per scoprire se è stata accesa a mano
+bool HueManager::isPhysicallyOn() {
+    if (_lights.length() == 0 || _bridgeIp == "") return false;
+    
+    // Estraiamo il primo ID lampadina dalla stringa (es. "4,7,9" -> "4")
+    String firstId = _lights.substring(0, _lights.indexOf(',') == -1 ? _lights.length() : _lights.indexOf(','));
+    
+    WiFiClientSecure client; client.setInsecure(); HTTPClient http;
+    String url = "https://" + _bridgeIp + "/api/" + _token + "/lights/" + firstId;
+    
+    http.begin(client, url);
+    int httpCode = http.GET();
+    bool isOn = false;
+    
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        // Lettura veloce tramite ricerca stringa, per non appesantire l'ESP32 col parsing JSON!
+        if (payload.indexOf("\"on\":true") > 0 || payload.indexOf("\"on\": true") > 0) {
+            isOn = true;
+        }
+    }
+    http.end();
+    return isOn;
 }
