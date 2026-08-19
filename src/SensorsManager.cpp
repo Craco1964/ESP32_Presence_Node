@@ -58,7 +58,7 @@ bool SensorsManager::begin() {
     } else {
         radar.activateConfigMode();
         radar.setSystemMode(LD2420SystemMode::Energy);
-        radar.setGateRange(0, 6, 5);   // ogni gate è circa 75 cm, 5s hold-off
+        radar.setGateRange(1, 6, 5);   // ogni gate è circa 75 cm, 5s hold-off
         radar.deactivateConfigMode();
         //applyCustomThresholds();
         

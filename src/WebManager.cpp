@@ -36,10 +36,34 @@ void WebManager::begin() {
 }
 
 void WebManager::update() {
+    // 1. Riavvio manuale (es. cambio credenziali Wi-Fi)
     if (_shouldReboot) {
         Serial.println("Riavvio in corso per applicare credenziali...");
         delay(1000);
         ESP.restart();
+    }
+
+    // 2. 🧹 MANUTENZIONE NOTTURNA (Pulizia RAM e Socket zombi)
+    // Eseguiamo il controllo ogni 30 secondi per non appesantire il processore
+    static unsigned long lastTimeCheck = 0;
+    if (millis() - lastTimeCheck > 30000) {
+        lastTimeCheck = millis();
+        
+        // Il riavvio è permesso SOLO se la scheda è accesa da almeno 10 minuti (600.000 ms).
+        // Questo evita riavvii continui se la scheda si accende e legge che sono le 04:00.
+        if (millis() > 600000) { 
+            struct tm timeinfo;
+            // Legge l'orario senza bloccare il codice (timeout brevissimo di 10ms)
+            if (getLocalTime(&timeinfo, 10)) { 
+                // Imposta qui l'ora del riavvio (es. le 04:00 del mattino)
+                if (timeinfo.tm_hour == 4 && timeinfo.tm_min == 0) {
+                    Serial.println("\n🧹 [SYSTEM] Manutenzione notturna in corso...");
+                    Serial.println("Liberazione RAM e reset dei socket di rete. Riavvio!");
+                    delay(1000);
+                    ESP.restart();
+                }
+            }
+        }
     }
 }
 
