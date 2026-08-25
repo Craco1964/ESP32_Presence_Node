@@ -43,25 +43,38 @@ void WebManager::update() {
         ESP.restart();
     }
 
-    // 2. 🧹 MANUTENZIONE NOTTURNA (Pulizia RAM e Socket zombi)
-    // Eseguiamo il controllo ogni 30 secondi per non appesantire il processore
+    // 2. 🧹 MANUTENZIONE NOTTURNA (Pulizia RAM)
     static unsigned long lastTimeCheck = 0;
     if (millis() - lastTimeCheck > 30000) {
         lastTimeCheck = millis();
         
-        // Il riavvio è permesso SOLO se la scheda è accesa da almeno 10 minuti (600.000 ms).
-        // Questo evita riavvii continui se la scheda si accende e legge che sono le 04:00.
+        // Il riavvio è permesso SOLO se la scheda è accesa da almeno 10 minuti (600.000 ms)
         if (millis() > 600000) { 
             struct tm timeinfo;
-            // Legge l'orario senza bloccare il codice (timeout brevissimo di 10ms)
             if (getLocalTime(&timeinfo, 10)) { 
-                // Imposta qui l'ora del riavvio (es. le 04:00 del mattino)
+                // Impostato per le 04:00 del mattino
                 if (timeinfo.tm_hour == 4 && timeinfo.tm_min == 0) {
-                    Serial.println("\n🧹 [SYSTEM] Manutenzione notturna in corso...");
-                    Serial.println("Liberazione RAM e reset dei socket di rete. Riavvio!");
+                    Serial.println("\n🧹 [SYSTEM] Manutenzione notturna in corso... Riavvio!");
                     delay(1000);
                     ESP.restart();
                 }
+            }
+        }
+    }
+
+    // 3. 🐕 WATCHDOG WI-FI (IL SALVAVITA)
+    // Non eseguiamo il controllo se siamo in modalità Access Point (Setup iniziale)
+    if (!isAPMode()) {
+        static unsigned long wifiLostTime = millis();
+        
+        if (WiFi.status() == WL_CONNECTED) {
+            wifiLostTime = millis(); // Finché è connesso, resetta il timer
+        } else {
+            // Se la connessione manca per più di 5 minuti (300.000 ms)
+            if (millis() - wifiLostTime > 300000) {
+                Serial.println("❌ [WATCHDOG] Wi-Fi perso da oltre 5 minuti. Riavvio di emergenza!");
+                delay(1000);
+                ESP.restart();
             }
         }
     }
@@ -106,7 +119,7 @@ void WebManager::setupWiFi() {
             // --- NUOVO: SINCRONIZZAZIONE SERVER NTP DOPO LA CONNESSIONE WIFI ---
             Serial.println("\nWi-Fi Connesso! Configuro l'orologio NTP...");
             // Evita che il wi-fi vada in sleep mode per non perdere la sincronizzazione del tempo  
-            WiFi.setSleep(false); // <-- TODO V2.0: Toggle da App React
+            //WiFi.setSleep(false); // <-- TODO V2.0: Toggle da App React
             configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
         }
     }
