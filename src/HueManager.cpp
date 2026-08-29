@@ -174,12 +174,26 @@ void HueManager::update() {
 
         // FASE 1: Metà del tempo - Pre-Off Warning
         if (elapsedMs >= halfTimeoutMs && elapsedMs < timeoutLimitMs) {
-            if (!_isDimmed && !_timeoutExpiredCommandSent && _lightIsOn) {
-                if (activeAction == "on_off" || activeAction == "off_only") {
+            if (!_isDimmed && !_timeoutExpiredCommandSent) {
+                
+                bool proceedWithDimming = _lightIsOn;
+
+                // Se l'ESP crede che sia spenta ma siamo in SOLO OFF, interroghiamo il Bridge!
+                if (!proceedWithDimming && activeAction == "off_only") {
+                    Serial.println("🔍 [AUTO-HUE] Verifico lo stato fisico della luce prima di dimmerare...");
+                    proceedWithDimming = isPhysicallyOn();
+                    
+                    // Sincronizziamo la memoria dell'ESP32 per non doverlo chiedere di nuovo
+                    if (proceedWithDimming) {
+                        _lightIsOn = true; 
+                    }
+                }
+
+                if (proceedWithDimming) {
                     Serial.println("🌗 [AUTO-HUE] Metà tempo trascorso. Attivo il Pre-Off Warning (Luce fioca)...");
                     
                     int dimBrightness = activeBrightness / 2;
-                    if (dimBrightness < 1) dimBrightness = 1; // Impedisce lo spegnimento accidentale a 0
+                    if (dimBrightness < 1) dimBrightness = 1; 
                     
                     forceLightsState(true, dimBrightness, activeColor);
                     _isDimmed = true;
