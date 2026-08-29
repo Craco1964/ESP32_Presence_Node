@@ -55,6 +55,8 @@ private:
     bool _lightIsOn;
     unsigned long _lastValidPresenceTime;
     bool _timeoutExpiredCommandSent;
+
+    bool _isDimmed;               // Flag per il Pre-Off Warning
     
     // Funzione helper per le regole
     bool isRuleActive(const TimeRule& rule, int currentMins);

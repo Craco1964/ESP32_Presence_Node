@@ -6,6 +6,7 @@ HueManager::HueManager(SensorsManager* sensors) : _sensors(sensors) {
     _lightIsOn = false;
     _lastValidPresenceTime = 0;
     _timeoutExpiredCommandSent = false;
+    _isDimmed = false; // Inizializzazione Pre-Off Warning
 }
 
 void HueManager::begin() {
@@ -141,36 +142,59 @@ void HueManager::update() {
         _lastValidPresenceTime = millis(); 
         _timeoutExpiredCommandSent = false; 
         
+        // Se rientriamo durante il Pre-Off, ripristiniamo istantaneamente la luminosità massima
+        if (_isDimmed) {
+            Serial.println("🏃 [AUTO-HUE] Movimento rilevato! Ripristino luminosità originale.");
+            forceLightsState(true, activeBrightness, activeColor);
+            _isDimmed = false;
+        }
+
         if (!_lightIsOn) {
             if (activeAction == "on_off" || activeAction == "on_only") {
-                
-                // 👇 --- NOVITÀ: RISPETTO PER IL TELECOMANDO --- 👇
                 bool skipOnCommand = false;
                 if (_ignoreIfOn) {
-                    if (isPhysicallyOn()) { // Interroga il bridge
-                        Serial.println("💡 [AUTO-HUE] Luce già accesa fisicamente! Ignoro per non sovrascrivere il telecomando.");
+                    if (isPhysicallyOn()) { 
+                        Serial.println("💡 [AUTO-HUE] Luce già accesa fisicamente! Ignoro per non sovrascrivere.");
                         skipOnCommand = true;
-                        _lightIsOn = true; // Sincronizza lo stato interno dell'ESP32
+                        _lightIsOn = true; 
                     }
                 }
 
                 if (!skipOnCommand) {
                     Serial.printf("\n💡 [AUTO-HUE] Presenza rilevata! Accendo col colore della fascia: %s\n", activeColor.c_str());
                     forceLightsState(true, activeBrightness, activeColor);
+                    _isDimmed = false; 
                 }
             }
         }
     } else {
         unsigned long elapsedMs = millis() - _lastValidPresenceTime;
         unsigned long timeoutLimitMs = _timeoutSec * 1000UL;
+        unsigned long halfTimeoutMs = timeoutLimitMs / 2;
 
-        if (elapsedMs > timeoutLimitMs) {
+        // FASE 1: Metà del tempo - Pre-Off Warning
+        if (elapsedMs >= halfTimeoutMs && elapsedMs < timeoutLimitMs) {
+            if (!_isDimmed && !_timeoutExpiredCommandSent && _lightIsOn) {
+                if (activeAction == "on_off" || activeAction == "off_only") {
+                    Serial.println("🌗 [AUTO-HUE] Metà tempo trascorso. Attivo il Pre-Off Warning (Luce fioca)...");
+                    
+                    int dimBrightness = activeBrightness / 2;
+                    if (dimBrightness < 1) dimBrightness = 1; // Impedisce lo spegnimento accidentale a 0
+                    
+                    forceLightsState(true, dimBrightness, activeColor);
+                    _isDimmed = true;
+                }
+            }
+        }
+        // FASE 2: Tempo scaduto - Spegnimento totale
+        else if (elapsedMs >= timeoutLimitMs) {
             if (!_timeoutExpiredCommandSent) { 
                 if (activeAction == "on_off" || activeAction == "off_only") {
                     Serial.println("\n🌙 [AUTO-HUE] Nessuna attività. SPENGO DI SICUREZZA!");
                     forceLightsState(false);
                 }
                 _timeoutExpiredCommandSent = true; 
+                _isDimmed = false; // Resettiamo la bandierina per il prossimo ciclo
             }
         }
     }
