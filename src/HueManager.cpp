@@ -177,25 +177,32 @@ void HueManager::update() {
             if (!_isDimmed && !_timeoutExpiredCommandSent) {
                 
                 bool proceedWithDimming = _lightIsOn;
+                int dimmingBaseBri = activeBrightness;
+                String dimmingColor = activeColor;
 
-                // Se l'ESP crede che sia spenta ma siamo in SOLO OFF, interroghiamo il Bridge!
-                if (!proceedWithDimming && activeAction == "off_only") {
-                    Serial.println("🔍 [AUTO-HUE] Verifico lo stato fisico della luce prima di dimmerare...");
-                    proceedWithDimming = isPhysicallyOn();
+                // Se siamo in SOLO OFF, estraiamo i valori reali dal Bridge Hue
+                if (activeAction == "off_only") {
+                    Serial.println("🔍 [AUTO-HUE] Modalità SOLO OFF: Leggo luminosità attuale dal Bridge...");
+                    int physicalBri = getPhysicalBrightness();
                     
-                    // Sincronizziamo la memoria dell'ESP32 per non doverlo chiedere di nuovo
-                    if (proceedWithDimming) {
-                        _lightIsOn = true; 
+                    if (physicalBri >= 0) {
+                        proceedWithDimming = true;
+                        _lightIsOn = true;
+                        dimmingBaseBri = physicalBri; // Usa la luminosità REALE misurata
+                        dimmingColor = ""; // Stringa vuota = ignora il colore, mantieni quello fisico!
+                    } else {
+                        proceedWithDimming = false; // Era fisicamente spenta
                     }
                 }
 
                 if (proceedWithDimming) {
                     Serial.println("🌗 [AUTO-HUE] Metà tempo trascorso. Attivo il Pre-Off Warning (Luce fioca)...");
                     
-                    int dimBrightness = activeBrightness / 2;
+                    int dimBrightness = dimmingBaseBri / 2;
                     if (dimBrightness < 1) dimBrightness = 1; 
                     
-                    forceLightsState(true, dimBrightness, activeColor);
+                    // Invia il comando. Se dimmingColor è vuoto, il colore non verrà alterato!
+                    forceLightsState(true, dimBrightness, dimmingColor);
                     _isDimmed = true;
                 }
             }
@@ -210,13 +217,28 @@ void HueManager::update() {
                 _timeoutExpiredCommandSent = true; 
                 _isDimmed = false; // Resettiamo la bandierina per il prossimo ciclo
             }
+            // 👇 --- NUOVA PATCH: RISVEGLIO IN BACKGROUND --- 👇
+            else if (activeAction == "off_only") {
+                // Se il timer è scaduto, controlla ogni 15 secondi se la luce è stata accesa a mano
+                static unsigned long lastIdleCheck = 0;
+                if (millis() - lastIdleCheck > 15000) {
+                    lastIdleCheck = millis();
+                    if (isPhysicallyOn()) {
+                        Serial.println("🔄 [AUTO-HUE] Rilevata accensione manuale! Faccio ripartire il timer di spegnimento.");
+                        _lastValidPresenceTime = millis();
+                        _timeoutExpiredCommandSent = false;
+                        _lightIsOn = true;
+                    }
+                }
+            }
+            // ☝️ ------------------------------------------- ☝️
         }
     }
 }
 
 void HueManager::forceLightsState(bool state, int brightness, String hexColor) {
     _lightIsOn = state; 
-    if (state) _lastValidPresenceTime = millis(); 
+    //if (state) _lastValidPresenceTime = millis(); 
     if (_lights.length() == 0) return;
 
     WiFiClientSecure client; client.setInsecure(); HTTPClient http; http.setReuse(true); 
@@ -234,8 +256,8 @@ void HueManager::forceLightsState(bool state, int brightness, String hexColor) {
             String xyString = hexToXY(hexColor);
             payload += ", " + xyString;
             Serial.printf("🎨 [HUE-MATH] Colore HEX %s convertito con successo in %s\n", hexColor.c_str(), xyString.c_str());
-        } else {
-            Serial.printf("⚠️ [HUE-MATH] Attenzione: Stringa colore non valida o vuota: '%s'\n", hexColor.c_str());
+        } else if (hexColor != "") {
+            Serial.printf("⚠️ [HUE-MATH] Attenzione: Stringa colore non valida: '%s'\n", hexColor.c_str());
         }
         // ☝️ -------------------------------------------------- ☝️
         
@@ -338,4 +360,33 @@ bool HueManager::isPhysicallyOn() {
     }
     http.end();
     return isOn;
+}
+
+int HueManager::getPhysicalBrightness() {
+    if (_lights.length() == 0 || _bridgeIp == "") return -1;
+    
+    // Interroga la prima lampadina per capire la situazione
+    String firstId = _lights.substring(0, _lights.indexOf(',') == -1 ? _lights.length() : _lights.indexOf(','));
+    WiFiClientSecure client; client.setInsecure(); HTTPClient http;
+    String url = "https://" + _bridgeIp + "/api/" + _token + "/lights/" + firstId;
+    
+    http.begin(client, url);
+    int httpCode = http.GET();
+    int briPct = -1; // -1 significa "Spenta" o "Errore"
+    
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        if (payload.indexOf("\"on\":true") > 0 || payload.indexOf("\"on\": true") > 0) {
+            int briIndex = payload.indexOf("\"bri\":");
+            if (briIndex > 0) {
+                int commaIndex = payload.indexOf(",", briIndex);
+                if (commaIndex > 0) {
+                    int rawBri = payload.substring(briIndex + 6, commaIndex).toInt();
+                    briPct = (rawBri * 100) / 254; // Converte in scala 0-100%
+                }
+            }
+        }
+    }
+    http.end();
+    return briPct;
 }

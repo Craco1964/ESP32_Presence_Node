@@ -65,5 +65,6 @@ private:
 
     bool _ignoreIfOn;             // Flag per rispettare il telecomando
     bool isPhysicallyOn();        // Funzione per interrogare il Bridge
+    int getPhysicalBrightness();
     
 };
