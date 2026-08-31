@@ -137,15 +137,26 @@ void HueManager::update() {
         return; // Blocca l'esecuzione: ignora il radar per questa fascia oraria!
     }
 
+    // 👇 --- MEMORIA DELLA LUMINOSITA' ORIGINALE --- 👇
+    static int savedPhysicalBri = -1;
+
     // --- 4. MOTORE DELLE AZIONI ---
     if (currentValidPresence) {
         _lastValidPresenceTime = millis(); 
         _timeoutExpiredCommandSent = false; 
         
-        // Se rientriamo durante il Pre-Off, ripristiniamo istantaneamente la luminosità massima
+        // Se rientriamo durante il Pre-Off, ripristiniamo istantaneamente la luminosità
         if (_isDimmed) {
             Serial.println("🏃 [AUTO-HUE] Movimento rilevato! Ripristino luminosità originale.");
-            forceLightsState(true, activeBrightness, activeColor);
+            
+            if (activeAction == "off_only") {
+                // SOLO OFF: usiamo la luminosità salvata e non tocchiamo il colore (usiamo "")
+                int restoreBri = (savedPhysicalBri > 0) ? savedPhysicalBri : 100;
+                forceLightsState(true, restoreBri, "");
+            } else {
+                // Nelle altre modalità, forziamo i parametri scritti nella regola
+                forceLightsState(true, activeBrightness, activeColor);
+            }
             _isDimmed = false;
         }
 
@@ -188,20 +199,21 @@ void HueManager::update() {
                     if (physicalBri >= 0) {
                         proceedWithDimming = true;
                         _lightIsOn = true;
-                        dimmingBaseBri = physicalBri; // Usa la luminosità REALE misurata
-                        dimmingColor = ""; // Stringa vuota = ignora il colore, mantieni quello fisico!
+                        dimmingBaseBri = physicalBri;       // Usa la luminosità misurata per dimezzare
+                        savedPhysicalBri = physicalBri;     // 💾 SALVA IL VALORE PER IL RIPRISTINO FUTURO
+                        dimmingColor = "";                  // Stringa vuota = ignora il colore!
                     } else {
-                        proceedWithDimming = false; // Era fisicamente spenta
+                        proceedWithDimming = false;
                     }
+                } else {
+                    savedPhysicalBri = activeBrightness; // Salva la regola per le altre modalità
                 }
 
-                if (proceedWithDimming) {
+                if (proceedWithDimming && (activeAction == "on_off" || activeAction == "off_only")) {
                     Serial.println("🌗 [AUTO-HUE] Metà tempo trascorso. Attivo il Pre-Off Warning (Luce fioca)...");
-                    
                     int dimBrightness = dimmingBaseBri / 2;
                     if (dimBrightness < 1) dimBrightness = 1; 
                     
-                    // Invia il comando. Se dimmingColor è vuoto, il colore non verrà alterato!
                     forceLightsState(true, dimBrightness, dimmingColor);
                     _isDimmed = true;
                 }
@@ -215,23 +227,21 @@ void HueManager::update() {
                     forceLightsState(false);
                 }
                 _timeoutExpiredCommandSent = true; 
-                _isDimmed = false; // Resettiamo la bandierina per il prossimo ciclo
+                _isDimmed = false;
             }
-            // 👇 --- NUOVA PATCH: RISVEGLIO IN BACKGROUND --- 👇
+            // RISVEGLIO IN BACKGROUND (Se acceso a mano dopo lo spegnimento)
             else if (activeAction == "off_only") {
-                // Se il timer è scaduto, controlla ogni 15 secondi se la luce è stata accesa a mano
                 static unsigned long lastIdleCheck = 0;
                 if (millis() - lastIdleCheck > 15000) {
                     lastIdleCheck = millis();
                     if (isPhysicallyOn()) {
-                        Serial.println("🔄 [AUTO-HUE] Rilevata accensione manuale! Faccio ripartire il timer di spegnimento.");
+                        Serial.println("🔄 [AUTO-HUE] Rilevata accensione manuale! Faccio ripartire il timer.");
                         _lastValidPresenceTime = millis();
                         _timeoutExpiredCommandSent = false;
                         _lightIsOn = true;
                     }
                 }
             }
-            // ☝️ ------------------------------------------- ☝️
         }
     }
 }
